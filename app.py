@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
-import gradio as gr
+import streamlit as st
 import os
 
 # ------------------------- Helper Functions -------------------------
@@ -9,22 +9,17 @@ import os
 def load_k_values_from_csv(component):
     filepath = f"data/{component}.csv"
     if not os.path.exists(filepath):
-        raise FileNotFoundError(f"Le fichier {filepath} est introuvable. Vérifiez qu'il est inclus dans le dépôt.")
-    
-    # Charger le fichier CSV
-    data = pd.read_csv(filepath)
+        st.error(f"Le fichier {filepath} est introuvable. Vérifiez qu'il est inclus dans le dépôt.")
+        st.stop()
 
-    # Nettoyer les noms de colonnes pour supprimer les espaces ou caractères invisibles
+    data = pd.read_csv(filepath)
     data.columns = data.columns.str.strip()  # Supprime les espaces autour des noms de colonnes
 
-    # Vérifiez que les colonnes 'T' et 'K' existent
     if "T" not in data.columns or "K" not in data.columns:
-        raise ValueError(f"Le fichier {component}.csv doit contenir des colonnes 'T' et 'K'.")
-    
-    # Créer l'interpolateur
+        st.error(f"Le fichier {component}.csv doit contenir des colonnes 'T' et 'K'.")
+        st.stop()
+
     return interp1d(data["T"], data["K"], kind="linear", fill_value="extrapolate")
-
-
 
 def calculate_corrected_coefficients(N, T_dict, F_dict, z_i_dict, V_dict, U_dict, K_values):
     A = np.zeros(N - 1)
@@ -50,7 +45,6 @@ def calculate_corrected_coefficients(N, T_dict, F_dict, z_i_dict, V_dict, U_dict
 
     return A, B, C, D
 
-
 def thomas_algorithm(A, B, C, D):
     N = len(B)
     P = np.zeros(N - 1)
@@ -69,7 +63,6 @@ def thomas_algorithm(A, B, C, D):
     for i in range(N - 2, -1, -1):
         x[i] = Q[i] - P[i] * x[i + 1]
     return x
-
 
 # ------------------------- Main Simulation Function -------------------------
 
@@ -93,9 +86,10 @@ def run_simulation(max_iterations, tolerance):
 
     for iteration in range(max_iterations):
         stage_sums.fill(0)
-        S_values = []  # To store S_j values for the iteration
-        iteration_log = f"Iteration {iteration + 1}\n"
-        for comp in components:
+        S_values = []
+        st.subheader(f"Iteration {iteration + 1}")
+        cols = st.columns(len(components))
+        for i, comp in enumerate(components):
             k_interp = load_k_values_from_csv(comp)
             K_values = [k_interp(T_dict[j]) for j in range(1, N + 1)]
             z_dict = locals()[f"z_{comp}"]
@@ -104,21 +98,16 @@ def run_simulation(max_iterations, tolerance):
             )
             solution = thomas_algorithm(A_calc, B_calc, C_calc, D_calc)
 
-            # Log matrices and x_{i,j} values before normalization
-            iteration_log += f"\nComponent: {comp}\n"
-            iteration_log += "Coefficient Matrix (A, B, C):\n"
-            for i in range(N):
-                row = [0.0] * N
-                if i > 0:
-                    row[i - 1] = A_calc[i - 1]
-                row[i] = B_calc[i]
-                if i < N - 1:
-                    row[i + 1] = C_calc[i]
-                iteration_log += " ".join(f"{val:10.2f}" for val in row) + "\n"
-            iteration_log += "Right-hand side (D):\n"
-            iteration_log += " ".join(f"{val:10.4f}" for val in D_calc) + "\n"
-            iteration_log += "x_{i,j} before normalization:\n"
-            iteration_log += " ".join(f"{x:10.4f}" for x in solution) + "\n"
+            coeff_df = pd.DataFrame({
+                "A": np.pad(A_calc, (1, 0), 'constant'),
+                "B": B_calc,
+                "C": np.pad(C_calc, (0, 1), 'constant'),
+                "D": D_calc
+            })
+
+            with cols[i]:
+                st.subheader(f"{comp} Coefficients")
+                st.dataframe(coeff_df)
 
             stage_sums += solution
             results[comp] = solution
@@ -127,7 +116,6 @@ def run_simulation(max_iterations, tolerance):
             for j in range(N):
                 x_normalized[comp][j] = results[comp][j] / (stage_sums[j] / C)
 
-        # Compute new temperatures and S_j values
         new_T_dict = {}
         for j in range(1, N + 1):
             sum_Kx = sum(
@@ -136,14 +124,13 @@ def run_simulation(max_iterations, tolerance):
             )
             S_j = sum_Kx - 1
             S_values.append(S_j)
-            new_T_dict[j] = T_dict[j] - S_j * 0.1  # Adjust temperature step size
+            new_T_dict[j] = T_dict[j] - S_j * 0.1
 
         max_temp_diff = max(abs(new_T_dict[j] - T_dict[j]) for j in range(1, N + 1))
-        iteration_log += f"S_j values: {', '.join(f'{S:.4f}' for S in S_values)}\n"
-        output_logs.append(iteration_log)
+        st.text(f"S_j values: {', '.join(f'{S:.4f}' for S in S_values)}")
 
         if max_temp_diff < tolerance:
-            output_logs.append("\nConverged!\n")
+            st.success("Converged!")
             break
         T_dict = new_T_dict
 
@@ -154,40 +141,23 @@ def run_simulation(max_iterations, tolerance):
         "S_values": S_values,
     }
     return final_results
-def save_results_to_csv(results):
-    df = pd.DataFrame(results["x_normalized"])
-    df["Stage Temperatures"] = results["stage_temperatures"]
-    filepath = "simulation_results.csv"
-    df.to_csv(filepath, index=False)
-    return filepath
 
-# ------------------------- Gradio Interface -------------------------
+# ------------------------- Streamlit Interface -------------------------
 
-def gradio_interface(max_iterations, tolerance):
-    results = run_simulation(int(max_iterations), float(tolerance))
-    logs = "\n".join(results["logs"])
-    x_normalized = results["x_normalized"]
-    stage_temperatures = results["stage_temperatures"]
+st.title("Distillation Simulation")
+st.sidebar.header("Simulation Parameters")
 
-    x_normalized_str = "\n".join(
-        [f"{comp}: {', '.join(f'{val:.4f}' for val in x_normalized[comp])}" for comp in x_normalized]
-    )
-    stage_temps_str = ", ".join(f"{temp:.2f}°F" for temp in stage_temperatures)
+max_iterations = st.sidebar.number_input("Max Iterations", min_value=1, value=12)
+tolerance = st.sidebar.number_input("Tolerance", min_value=0.0001, value=0.01, step=0.0001)
 
-    return f"{logs}\n\nNormalized x_ij:\n{x_normalized_str}\n\nStage Temperatures:\n{stage_temps_str}"
+if st.button("Run Simulation"):
+    with st.spinner("Running simulation..."):
+        results = run_simulation(max_iterations, tolerance)
 
+    st.subheader("Normalized x_ij")
+    normalized_df = pd.DataFrame(results["x_normalized"])
+    st.dataframe(normalized_df)
 
-iface = gr.Interface(
-    fn=gradio_interface,
-    inputs=[
-        gr.components.Number(label="Max Iterations", value=12),
-        gr.components.Number(label="Tolerance", value=0.01),
-    ],
-    outputs="text",
-    title="Distillation Simulation",
-)
-iface.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
-
-
-
-
+    st.subheader("Stage Temperatures")
+    stage_temp_df = pd.DataFrame({"Stage": range(1, len(results["stage_temperatures"]) + 1), "Temperature (°F)": results["stage_temperatures"]})
+    st.dataframe(stage_temp_df)
