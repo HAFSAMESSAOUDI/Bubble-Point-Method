@@ -8,10 +8,22 @@ import os
 
 def load_k_values_from_csv(component):
     filepath = f"data/{component}.csv"
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Le fichier {filepath} est introuvable. Vérifiez qu'il est inclus dans le dépôt.")
+    
+    # Charger le fichier CSV
     data = pd.read_csv(filepath)
+
+    # Nettoyer les noms de colonnes pour supprimer les espaces ou caractères invisibles
+    data.columns = data.columns.str.strip()  # Supprime les espaces autour des noms de colonnes
+
+    # Vérifiez que les colonnes 'T' et 'K' existent
     if "T" not in data.columns or "K" not in data.columns:
-        raise ValueError(f"CSV file for {component} must contain 'T' and 'K' columns.")
+        raise ValueError(f"Le fichier {component}.csv doit contenir des colonnes 'T' et 'K'.")
+    
+    # Créer l'interpolateur
     return interp1d(data["T"], data["K"], kind="linear", fill_value="extrapolate")
+
 
 
 def calculate_corrected_coefficients(N, T_dict, F_dict, z_i_dict, V_dict, U_dict, K_values):
