@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
 import gradio as gr
-import os
 
 
 # ------------------------- Helper Functions -------------------------
@@ -170,8 +169,4 @@ iface = gr.Interface(
     title="Distillation Simulation",
 )
 
-
-# Ensure the app runs on the correct port for Render
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))  # Render provides the PORT environment variable
-    iface.launch(server_name="0.0.0.0", server_port=port)
+iface.launch()
