@@ -154,6 +154,14 @@ def run_simulation(max_iterations, tolerance):
         "S_values": S_values,
     }
     return final_results
+    
+def save_results_to_csv(results):
+    df_normalized = pd.DataFrame(results["x_normalized"])
+    df_normalized.index = [f"Stage {i+1}" for i in range(len(results["stage_temperatures"]))]
+    df_normalized["Stage Temperatures"] = results["stage_temperatures"]
+    output_filepath = "results.csv"
+    df_normalized.to_csv(output_filepath, index=True)
+    return output_filepath
 
 # ------------------------- Gradio Interface -------------------------
 
@@ -174,12 +182,32 @@ def gradio_interface(max_iterations, tolerance):
 iface = gr.Interface(
     fn=gradio_interface,
     inputs=[
-        gr.components.Number(label="Max Iterations", value=12),
-        gr.components.Number(label="Tolerance", value=0.01),
+        gr.Number(label="Max Iterations", value=12),
+        gr.Number(label="Tolerance", value=0.01),
     ],
-    outputs="text",
+    outputs=gr.File(label="Télécharger les résultats (CSV)"),
     title="Distillation Simulation",
+    theme="default",  # Peut être modifié
 )
+
+# Ajouter l'icône avec Markdown
+custom_button = gr.Markdown("""
+<style>
+button#flag-btn {
+    background-color: #FF6347;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    font-size: 16px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+button#flag-btn i {
+    margin-right: 8px;
+}
+</style>
+<button id="flag-btn"><i class="fa fa-download"></i> Télécharger les résultats</button>
+""")
 iface.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
 
 
