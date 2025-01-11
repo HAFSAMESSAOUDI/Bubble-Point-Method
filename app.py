@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
 import gradio as gr
-
+import os
 
 # ------------------------- Helper Functions -------------------------
 
@@ -168,5 +168,8 @@ iface = gr.Interface(
     outputs="text",
     title="Distillation Simulation",
 )
+iface.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
 
-iface.launch()
+
+
+
