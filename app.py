@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
-
+import gradio as gr
+import os
 
 
 # ------------------------- Helper Functions -------------------------
@@ -159,4 +160,18 @@ def gradio_interface(max_iterations, tolerance):
     return f"{logs}\n\nNormalized x_ij:\n{x_normalized_str}\n\nStage Temperatures:\n{stage_temps_str}"
 
 
+iface = gr.Interface(
+    fn=gradio_interface,
+    inputs=[
+        gr.components.Number(label="Max Iterations", value=12),
+        gr.components.Number(label="Tolerance", value=0.01),
+    ],
+    outputs="text",
+    title="Distillation Simulation",
+)
 
+
+# Ensure the app runs on the correct port for Render
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))  # Render provides the PORT environment variable
+    iface.launch(server_name="0.0.0.0", server_port=port)
