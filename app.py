@@ -15,7 +15,7 @@ def load_k_values_from_csv(component):
     data = pd.read_csv(filepath)
 
     # Nettoyer les noms de colonnes pour supprimer les espaces ou caractères invisibles
-    data.columns = data.columns.str.strip()  # Supprime les espaces autour des noms de colonnes
+    data.columns = data.columns.str.strip()
 
     # Vérifiez que les colonnes 'T' et 'K' existent
     if "T" not in data.columns or "K" not in data.columns:
@@ -23,7 +23,6 @@ def load_k_values_from_csv(component):
     
     # Créer l'interpolateur
     return interp1d(data["T"], data["K"], kind="linear", fill_value="extrapolate")
-
 
 
 def calculate_corrected_coefficients(N, T_dict, F_dict, z_i_dict, V_dict, U_dict, K_values):
@@ -93,8 +92,9 @@ def run_simulation(max_iterations, tolerance):
 
     for iteration in range(max_iterations):
         stage_sums.fill(0)
-        S_values = []  # To store S_j values for the iteration
+        S_values = []
         iteration_log = f"Iteration {iteration + 1}\n"
+
         for comp in components:
             k_interp = load_k_values_from_csv(comp)
             K_values = [k_interp(T_dict[j]) for j in range(1, N + 1)]
@@ -104,9 +104,8 @@ def run_simulation(max_iterations, tolerance):
             )
             solution = thomas_algorithm(A_calc, B_calc, C_calc, D_calc)
 
-            # Log matrices and x_{i,j} values before normalization
-            iteration_log += f"\nComponent: {comp}\n"
-            iteration_log += "Coefficient Matrix (A, B, C):\n"
+            # Display matrices using pandas for readability
+            matrix_data = []
             for i in range(N):
                 row = [0.0] * N
                 if i > 0:
@@ -114,11 +113,15 @@ def run_simulation(max_iterations, tolerance):
                 row[i] = B_calc[i]
                 if i < N - 1:
                     row[i + 1] = C_calc[i]
-                iteration_log += " ".join(f"{val:10.2f}" for val in row) + "\n"
+                matrix_data.append(row)
+
+            iteration_log += f"\nComponent: {comp}\n"
+            iteration_log += "Coefficient Matrix (A, B, C):\n"
+            iteration_log += pd.DataFrame(matrix_data).to_string(index=False, header=False, float_format="{:.2f}".format) + "\n"
             iteration_log += "Right-hand side (D):\n"
-            iteration_log += " ".join(f"{val:10.4f}" for val in D_calc) + "\n"
+            iteration_log += pd.Series(D_calc).to_string(index=False, float_format="{:.4f}".format) + "\n"
             iteration_log += "x_{i,j} before normalization:\n"
-            iteration_log += " ".join(f"{x:10.4f}" for x in solution) + "\n"
+            iteration_log += pd.Series(solution).to_string(index=False, float_format="{:.4f}".format) + "\n"
 
             stage_sums += solution
             results[comp] = solution
@@ -136,10 +139,10 @@ def run_simulation(max_iterations, tolerance):
             )
             S_j = sum_Kx - 1
             S_values.append(S_j)
-            new_T_dict[j] = T_dict[j] - S_j * 0.1  # Adjust temperature step size
+            new_T_dict[j] = T_dict[j] - S_j * 0.1
 
         max_temp_diff = max(abs(new_T_dict[j] - T_dict[j]) for j in range(1, N + 1))
-        iteration_log += f"S_j values: {', '.join(f'{S:.4f}' for S in S_values)}\n"
+        iteration_log += f"S_j values: [{', '.join(f'{S:.4f}' for S in S_values)}]\n"
         output_logs.append(iteration_log)
 
         if max_temp_diff < tolerance:
@@ -154,6 +157,8 @@ def run_simulation(max_iterations, tolerance):
         "S_values": S_values,
     }
     return final_results
+
+
 def save_results_to_csv(results):
     df = pd.DataFrame(results["x_normalized"])
     df["Stage Temperatures"] = results["stage_temperatures"]
@@ -170,9 +175,9 @@ def gradio_interface(max_iterations, tolerance):
     stage_temperatures = results["stage_temperatures"]
 
     x_normalized_str = "\n".join(
-        [f"{comp}: {', '.join(f'{val:.4f}' for val in x_normalized[comp])}" for comp in x_normalized]
+        [f"{comp}: [{', '.join(f'{val:.4f}' for val in x_normalized[comp])}]" for comp in x_normalized]
     )
-    stage_temps_str = ", ".join(f"{temp:.2f}°F" for temp in stage_temperatures)
+    stage_temps_str = f"[{', '.join(f'{temp:.2f}' for temp in stage_temperatures)}]"
 
     return f"{logs}\n\nNormalized x_ij:\n{x_normalized_str}\n\nStage Temperatures:\n{stage_temps_str}"
 
@@ -187,7 +192,3 @@ iface = gr.Interface(
     title="Distillation Simulation",
 )
 iface.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
-
-
-
-
