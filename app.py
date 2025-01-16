@@ -1,8 +1,11 @@
+from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
 import gradio as gr
+import seaborn as sns
 import os
+
 
 # ------------------------- Helper Functions -------------------------
 
@@ -198,14 +201,22 @@ th {
 tr:nth-child(even) {
     background-color:rgb(0, 0, 0);
 }
+# Style les colonnes de composants en bleu
+def style_results(df):
+    return df.style.set_properties(
+        subset=["C3", "nC4", "nC5"],
+        **{"color": "blue", "font-weight": "bold"}
+    )
+
 """
 
-def gradio_interface(max_iterations, tolerance):
+def gradio_interface(max_iterations, tolerance, plot_choice):
     results = run_simulation(int(max_iterations), float(tolerance))
     logs = results["logs"]
     x_normalized = results["x_normalized"]
     stage_temperatures = results["stage_temperatures"]
     S_values = results["S_values"]
+    
 
     # Préparation des tableaux formatés pour chaque itération
     formatted_logs = ""
@@ -224,55 +235,90 @@ def gradio_interface(max_iterations, tolerance):
                 f"</div>"
             )
 
-        formatted_logs += "</div>"  # Ferme le conteneur flex pour cette itération
+        formatted_logs += "</div>"
         formatted_logs += f"<h4>S_j Values:</h4>{log['S_j'].to_html(index=False, justify='center', border=1)}<hr>"
 
     # Création du tableau des résultats finaux (normalisés)
     df_results = pd.DataFrame(x_normalized)
     df_results["Stage Temperatures"] = stage_temperatures
+    
 
     # Enregistrer les résultats au format CSV pour téléchargement
     filepath = save_results_to_csv(results)
 
-    return formatted_logs, df_results, filepath
+    # Génération des graphiques en fonction du choix
+    plot = None
+    if plot_choice == "Évolution des S_j au cours des itérations":
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(10, 6))
+        for iteration, S_vals in enumerate(S_values):
+            plt.plot(range(1, len(S_vals) + 1), S_vals, marker="o", label=f"Iteration {iteration + 1}")
+        plt.xlabel("Étages")
+        plt.ylabel("Valeurs \(S_j\)")
+        plt.title("Évolution des \(S_j\) au cours des itérations")
+        plt.legend()
+        plot = gr.Plot(plt.gcf())
+        plt.close()
 
-    results = run_simulation(int(max_iterations), float(tolerance))
-    logs = results["logs"]
-    x_normalized = results["x_normalized"]
-    stage_temperatures = results["stage_temperatures"]
-    S_values = results["S_values"]
+    elif plot_choice == "Distribution des x_i,j par étage":
+        import matplotlib.pyplot as plt
+        stages = list(range(1, len(next(iter(x_normalized.values()))) + 1))
+        plt.figure(figsize=(10, 6))
+        bar_width = 0.2
+        positions = np.arange(len(stages))
 
-    # Prepare logs with HTML-styled tables for all iterations and components
-    formatted_logs = ""
-    for log in logs:
-        formatted_logs += f"<h3>Iteration {log['Iteration']}</h3><div style='display: flex; flex-wrap: wrap;'>"
-        
-        for comp, df_tridiagonal_with_D, solution in log["Tables"]:
-            formatted_logs += (
-                f"<div style='margin-right: 20px; margin-bottom: 20px;'>"
-                f"<h4>{comp} Tridiagonal Matrix (with D)</h4>"
-                f"{df_tridiagonal_with_D.to_html(index=True, justify='center', border=1)}"
-                f"<h4>{comp} Solution x_{{i,j}}:</h4>"
-                f"{pd.DataFrame({'x_{i,j}': solution}).to_html(index=False, justify='center', border=1)}"
-                f"</div>"
+        for idx, (comp, values) in enumerate(x_normalized.items()):
+            plt.bar(positions + idx * bar_width, values, width=bar_width, label=comp)
+
+        plt.xlabel("Étages")
+        plt.ylabel("Valeur de \(x_{i,j}\)")
+        plt.title("Distribution des \(x_{i,j}\) par étage")
+        plt.xticks(positions + bar_width * (len(x_normalized) - 1) / 2, stages)
+        plt.legend(title="Composants")
+        plt.grid(axis="y", linestyle="--", alpha=0.7)
+        plot = gr.Plot(plt.gcf())
+        plt.close()
+
+    elif plot_choice == "Heatmap de la Matrice Tridiagonale":
+        import seaborn as sns
+        import matplotlib.pyplot as plt
+
+        last_iteration_matrices = logs[-1]["Tables"]
+        num_components = len(last_iteration_matrices)
+
+        fig, axes = plt.subplots(1, num_components, figsize=(6 * num_components, 5), constrained_layout=True)
+
+        if num_components == 1:
+            axes = [axes]
+
+        for ax, (comp, df_tridiagonal_with_D, _) in zip(axes, last_iteration_matrices):
+            sns.heatmap(
+                df_tridiagonal_with_D.iloc[:, :-1],
+                annot=True,
+                fmt=".2f",
+                cmap="coolwarm",
+                ax=ax
             )
-        formatted_logs += "</div>"
+            ax.set_title(f"Heatmap: Matrice Tridiagonale - {comp}")
+            ax.set_xlabel("Colonnes")
+            ax.set_ylabel("Lignes")
 
-        # Display S_j values for this iteration
-        formatted_logs += f"<h4>S_j Values:</h4>{log['S_j'].to_html(index=False, justify='center', border=1)}<hr>"
+        plot = gr.Plot(plt.gcf())
+        plt.close()
 
-    # Create DataFrame for normalized results and stage temperatures
-    df_results = pd.DataFrame(x_normalized)
-    df_results["Stage Temperatures"] = stage_temperatures
+    elif plot_choice == "Variation de la température en fonction des étages":
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(10, 6))
+        plt.plot(range(1, len(stage_temperatures) + 1), stage_temperatures, marker="o", color="blue")
+        plt.xlabel("Étages")
+        plt.ylabel("Température (°C)")
+        plt.title("Variation de la température en fonction des étages")
+        plt.grid(axis="both", linestyle="--", alpha=0.7)
+        plot = gr.Plot(plt.gcf())
+        plt.close()
 
-    # Save results as CSV for download
-    filepath = save_results_to_csv(results)
+    return formatted_logs, df_results, filepath, plot
 
-    return formatted_logs, df_results, filepath
-
-
-
-# Gradio Interface Setup
 # Gradio Interface Setup
 iface = gr.Blocks(css=custom_css)
 
@@ -289,9 +335,23 @@ with iface:
         """
     )
     
+    # Input Row: Parameters for the simulation
     with gr.Row():
         max_iterations = gr.Number(label="Max Iterations", value=12)
         tolerance = gr.Number(label="Tolerance", value=0.01)
+
+    # Dropdown to select plot type
+    with gr.Row():
+        plot_choice = gr.Dropdown(
+            label="Choisissez le type de graphique à afficher",
+            choices=[
+                "Évolution des S_j au cours des itérations",
+                "Distribution des x_i,j par étage",
+                "Heatmap de la Matrice Tridiagonale",
+                "Variation de la température en fonction des étages"
+            ],
+            value="Évolution des S_j au cours des itérations"
+        )
 
     # Display detailed iteration logs and component results
     with gr.Row():
@@ -305,12 +365,16 @@ with iface:
     with gr.Row():
         download_file = gr.File(label="Download Results")
 
-    # Trigger the simulation
+    # Placeholder for plot output
+    with gr.Row():
+        plot_output = gr.Plot(label="Visualisation du graphique")
+
+    # Submit Button
     submit_button = gr.Button("Submit")
     submit_button.click(
         fn=gradio_interface,
-        inputs=[max_iterations, tolerance],
-        outputs=[logs_summary, results_table, download_file],
+        inputs=[max_iterations, tolerance, plot_choice],
+        outputs=[logs_summary, results_table, download_file, plot_output],
     )
 
 iface.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
