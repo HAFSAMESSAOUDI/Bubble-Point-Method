@@ -273,9 +273,22 @@ def gradio_interface(max_iterations, tolerance):
 
 
 # Gradio Interface Setup
+# Gradio Interface Setup
 iface = gr.Blocks(css=custom_css)
 
 with iface:
+    # Add a centered title to the app
+    gr.HTML(
+        """
+        <div style="text-align: center; margin-bottom: 20px;">
+            <h1 style="color: #007bff; font-family: Arial, sans-serif;">
+                Simulation of Tridiagonal Matrices and Solutions
+            </h1>
+            <p>Explore the iterative simulation of components, view detailed matrices, and analyze results.</p>
+        </div>
+        """
+    )
+    
     with gr.Row():
         max_iterations = gr.Number(label="Max Iterations", value=12)
         tolerance = gr.Number(label="Tolerance", value=0.01)
