@@ -170,6 +170,21 @@ def save_results_to_csv(results):
 
 def gradio_interface(max_iterations, tolerance):
     results = run_simulation(int(max_iterations), float(tolerance))
+    filepath = save_results_to_csv(results)
+    logs = "\n".join(results["logs"])
+    x_normalized = results["x_normalized"]
+    stage_temperatures = results["stage_temperatures"]
+
+    # Organiser les résultats dans un DataFrame
+    df_results = pd.DataFrame(x_normalized)
+    df_results["Stage Temperatures"] = stage_temperatures
+
+    # Inclure les logs textuels pour les détails supplémentaires
+    logs_summary = f"{logs}\n\nRésultats sous forme de tableau ci-dessous :"
+
+    return logs_summary, df_results,filepath
+
+    results = run_simulation(int(max_iterations), float(tolerance))
     logs = "\n".join(results["logs"])
     x_normalized = results["x_normalized"]
     stage_temperatures = results["stage_temperatures"]
@@ -188,7 +203,12 @@ iface = gr.Interface(
         gr.components.Number(label="Max Iterations", value=12),
         gr.components.Number(label="Tolerance", value=0.01),
     ],
-    outputs="text",
-    title="Distillation Simulation",
+    outputs=[
+        gr.Textbox(label="Logs et Résumé", lines=10),
+        gr.DataFrame(label="Résultats Normalisés et Températures"),
+        gr.File(label="Téléchargez les Résultats"),
+    ],
+    title="Simulation de Distillation",
 )
+
 iface.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
