@@ -26,28 +26,41 @@ def load_k_values_from_csv(component):
 
 
 def calculate_corrected_coefficients(N, T_dict, F_dict, z_i_dict, V_dict, U_dict, K_values):
-    A = np.zeros(N - 1)
-    B = np.zeros(N)
-    C = np.zeros(N - 1)
-    D = np.zeros(N)
+    A = np.zeros(N - 1)  # Subdiagonal values
+    B = np.zeros(N)      # Diagonal values
+    C = np.zeros(N - 1)  # Superdiagonal values
+    D = np.zeros(N)      # Right-hand side vector
 
     for j in range(1, N + 1):
         idx = j - 1
         K_ij = K_values[idx]
         F_j = F_dict.get(j, 0.0)
         z_ij = z_i_dict.get(j, 0.0)
-        D[idx] = -F_j * z_ij
+        D[idx] = -F_j * z_ij  # Compute D values
+        
         if j > 1:
             sum_Fm_Um = sum(F_dict.get(m, 0.0) - U_dict.get(m, 0.0) for m in range(1, j))
-            A[idx - 1] = V_dict[j] + sum_Fm_Um
+            A[idx - 1] = V_dict[j] + sum_Fm_Um  # Subdiagonal (A)
+
         V_jp1 = V_dict[j + 1] if j < N else 0.0
         sum_Fm_Um_B = sum(F_dict.get(m, 0.0) - U_dict.get(m, 0.0) for m in range(1, j + 1))
-        B[idx] = -(V_jp1 + sum_Fm_Um_B + U_dict[j] + V_dict[j] * K_ij)
+        B[idx] = -(V_jp1 + sum_Fm_Um_B + U_dict[j] + V_dict[j] * K_ij)  # Diagonal (B)
+
         if j < N:
             K_ijp1 = K_values[idx + 1]
-            C[idx] = V_dict[j + 1] * K_ijp1
+            C[idx] = V_dict[j + 1] * K_ijp1  # Superdiagonal (C)
 
-    return A, B, C, D
+    # Construct the tridiagonal matrix
+    tridiagonal_matrix = np.zeros((N, N))
+    for i in range(N):
+        if i > 0:
+            tridiagonal_matrix[i][i - 1] = A[i - 1]  # Subdiagonal
+        tridiagonal_matrix[i][i] = B[i]            # Diagonal
+        if i < N - 1:
+            tridiagonal_matrix[i][i + 1] = C[i]    # Superdiagonal
+
+    D = np.where(np.abs(D) < 1e-10, 0, D)  # Remove small numerical artifacts in D
+    return A, B, C, D, tridiagonal_matrix
 
 
 def thomas_algorithm(A, B, C, D):
@@ -82,53 +95,43 @@ def run_simulation(max_iterations, tolerance):
     V_dict = {1: 0.0, 2: 150.0, 3: 150.0, 4: 150.0, 5: 150.0}
     U_dict = {1: 50.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
     components = ["C3", "nC4", "nC5"]
-    C = len(components)
 
     results = {}
     x_normalized = {comp: np.zeros(N) for comp in components}
     stage_sums = np.zeros(N)
 
     output_logs = []
+    S_all_iterations = []
 
     for iteration in range(max_iterations):
         stage_sums.fill(0)
         S_values = []
-        iteration_log = f"Iteration {iteration + 1}\n"
+        iteration_tables = []
 
         for comp in components:
             k_interp = load_k_values_from_csv(comp)
             K_values = [k_interp(T_dict[j]) for j in range(1, N + 1)]
             z_dict = locals()[f"z_{comp}"]
-            A_calc, B_calc, C_calc, D_calc = calculate_corrected_coefficients(
+            A_calc, B_calc, C_calc, D_calc, tridiagonal_matrix = calculate_corrected_coefficients(
                 N, T_dict, F_dict, z_dict, V_dict, U_dict, K_values
             )
             solution = thomas_algorithm(A_calc, B_calc, C_calc, D_calc)
 
-            # Display matrices using pandas for readability
-            matrix_data = []
-            for i in range(N):
-                row = [0.0] * N
-                if i > 0:
-                    row[i - 1] = A_calc[i - 1]
-                row[i] = B_calc[i]
-                if i < N - 1:
-                    row[i + 1] = C_calc[i]
-                matrix_data.append(row)
-
-            iteration_log += f"\nComponent: {comp}\n"
-            iteration_log += "Coefficient Matrix (A, B, C):\n"
-            iteration_log += pd.DataFrame(matrix_data).to_string(index=False, header=False, float_format="{:.2f}".format) + "\n"
-            iteration_log += "Right-hand side (D):\n"
-            iteration_log += pd.Series(D_calc).to_string(index=False, float_format="{:.4f}".format) + "\n"
-            iteration_log += "x_{i,j} before normalization:\n"
-            iteration_log += pd.Series(solution).to_string(index=False, float_format="{:.4f}".format) + "\n"
+            # Save the tridiagonal matrix as a DataFrame for display
+            df_tridiagonal_with_D = pd.DataFrame(
+                tridiagonal_matrix,
+                columns=[f"Col {i + 1}" for i in range(N)],
+                index=[f"Row {i + 1}" for i in range(N)]
+            )       
+            df_tridiagonal_with_D["D"] = D_calc 
+            iteration_tables.append((comp, df_tridiagonal_with_D, pd.Series(solution, name="x_{i,j}")))
 
             stage_sums += solution
             results[comp] = solution
 
         for comp in components:
             for j in range(N):
-                x_normalized[comp][j] = results[comp][j] / (stage_sums[j] / C)
+                x_normalized[comp][j] = results[comp][j] / (stage_sums[j] / len(components))
 
         # Compute new temperatures and S_j values
         new_T_dict = {}
@@ -141,20 +144,26 @@ def run_simulation(max_iterations, tolerance):
             S_values.append(S_j)
             new_T_dict[j] = T_dict[j] - S_j * 0.1
 
+        S_all_iterations.append(S_values)
         max_temp_diff = max(abs(new_T_dict[j] - T_dict[j]) for j in range(1, N + 1))
-        iteration_log += f"S_j values: [{', '.join(f'{S:.4f}' for S in S_values)}]\n"
-        output_logs.append(iteration_log)
+
+        # Store iteration data
+        output_logs.append({
+            "Iteration": iteration + 1,
+            "Tables": iteration_tables,
+            "S_j": pd.DataFrame({"Stage": [f"Stage {j}" for j in range(1, N + 1)], "S_j": S_values}),
+        })
 
         if max_temp_diff < tolerance:
-            output_logs.append("\nConverged!\n")
             break
+
         T_dict = new_T_dict
 
     final_results = {
         "logs": output_logs,
         "x_normalized": {comp: list(map(float, x_normalized[comp])) for comp in components},
         "stage_temperatures": [round(T_dict[j], 2) for j in range(1, N + 1)],
-        "S_values": S_values,
+        "S_values": S_all_iterations,
     }
     return final_results
 
@@ -168,47 +177,127 @@ def save_results_to_csv(results):
 
 # ------------------------- Gradio Interface -------------------------
 
+custom_css = """
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 20px;
+}
+
+th, td {
+    border: 1px solid black;
+    text-align: center;
+    padding: 8px;
+}
+
+th {
+    background-color: #007bff;
+    color: black;
+}
+
+tr:nth-child(even) {
+    background-color:rgb(0, 0, 0);
+}
+"""
+
 def gradio_interface(max_iterations, tolerance):
     results = run_simulation(int(max_iterations), float(tolerance))
-    filepath = save_results_to_csv(results)
-    logs = "\n".join(results["logs"])
+    logs = results["logs"]
     x_normalized = results["x_normalized"]
     stage_temperatures = results["stage_temperatures"]
+    S_values = results["S_values"]
 
-    # Organiser les résultats dans un DataFrame
+    # Préparation des tableaux formatés pour chaque itération
+    formatted_logs = ""
+    for log in logs:
+        formatted_logs += f"<h3>Iteration {log['Iteration']}</h3>"
+        formatted_logs += "<div style='display: flex; justify-content: space-around; flex-wrap: wrap;'>"
+
+        # Ajout des matrices pour chaque composant
+        for comp, df_tridiagonal_with_D, solution in log["Tables"]:
+            formatted_logs += (
+                f"<div style='margin: 10px; text-align: center;'>"
+                f"<h4>{comp} Tridiagonal Matrix (with D)</h4>"
+                f"{df_tridiagonal_with_D.to_html(index=True, justify='center', border=1)}"
+                f"<h4>{comp} Solution x_{{i,j}}:</h4>"
+                f"{pd.DataFrame({'x_{i,j}': solution}).to_html(index=False, justify='center', border=1)}"
+                f"</div>"
+            )
+
+        formatted_logs += "</div>"  # Ferme le conteneur flex pour cette itération
+        formatted_logs += f"<h4>S_j Values:</h4>{log['S_j'].to_html(index=False, justify='center', border=1)}<hr>"
+
+    # Création du tableau des résultats finaux (normalisés)
     df_results = pd.DataFrame(x_normalized)
     df_results["Stage Temperatures"] = stage_temperatures
 
-    # Inclure les logs textuels pour les détails supplémentaires
-    logs_summary = f"{logs}\n\nRésultats sous forme de tableau ci-dessous :"
+    # Enregistrer les résultats au format CSV pour téléchargement
+    filepath = save_results_to_csv(results)
 
-    return logs_summary, df_results,filepath
+    return formatted_logs, df_results, filepath
 
     results = run_simulation(int(max_iterations), float(tolerance))
-    logs = "\n".join(results["logs"])
+    logs = results["logs"]
     x_normalized = results["x_normalized"]
     stage_temperatures = results["stage_temperatures"]
+    S_values = results["S_values"]
 
-    x_normalized_str = "\n".join(
-        [f"{comp}: [{', '.join(f'{val:.4f}' for val in x_normalized[comp])}]" for comp in x_normalized]
+    # Prepare logs with HTML-styled tables for all iterations and components
+    formatted_logs = ""
+    for log in logs:
+        formatted_logs += f"<h3>Iteration {log['Iteration']}</h3><div style='display: flex; flex-wrap: wrap;'>"
+        
+        for comp, df_tridiagonal_with_D, solution in log["Tables"]:
+            formatted_logs += (
+                f"<div style='margin-right: 20px; margin-bottom: 20px;'>"
+                f"<h4>{comp} Tridiagonal Matrix (with D)</h4>"
+                f"{df_tridiagonal_with_D.to_html(index=True, justify='center', border=1)}"
+                f"<h4>{comp} Solution x_{{i,j}}:</h4>"
+                f"{pd.DataFrame({'x_{i,j}': solution}).to_html(index=False, justify='center', border=1)}"
+                f"</div>"
+            )
+        formatted_logs += "</div>"
+
+        # Display S_j values for this iteration
+        formatted_logs += f"<h4>S_j Values:</h4>{log['S_j'].to_html(index=False, justify='center', border=1)}<hr>"
+
+    # Create DataFrame for normalized results and stage temperatures
+    df_results = pd.DataFrame(x_normalized)
+    df_results["Stage Temperatures"] = stage_temperatures
+
+    # Save results as CSV for download
+    filepath = save_results_to_csv(results)
+
+    return formatted_logs, df_results, filepath
+
+
+
+# Gradio Interface Setup
+iface = gr.Blocks(css=custom_css)
+
+with iface:
+    with gr.Row():
+        max_iterations = gr.Number(label="Max Iterations", value=12)
+        tolerance = gr.Number(label="Tolerance", value=0.01)
+
+    # Display detailed iteration logs and component results
+    with gr.Row():
+        logs_summary = gr.HTML(label="Logs and Detailed Iteration Results")
+
+    # Unified table for final normalized results and stage temperatures
+    with gr.Row():
+        results_table = gr.DataFrame(label="Normalized Results and Temperatures")
+        
+    # Download link for results
+    with gr.Row():
+        download_file = gr.File(label="Download Results")
+
+    # Trigger the simulation
+    submit_button = gr.Button("Submit")
+    submit_button.click(
+        fn=gradio_interface,
+        inputs=[max_iterations, tolerance],
+        outputs=[logs_summary, results_table, download_file],
     )
-    stage_temps_str = f"[{', '.join(f'{temp:.2f}' for temp in stage_temperatures)}]"
-
-    return f"{logs}\n\nNormalized x_ij:\n{x_normalized_str}\n\nStage Temperatures:\n{stage_temps_str}"
-
-
-iface = gr.Interface(
-    fn=gradio_interface,
-    inputs=[
-        gr.components.Number(label="Max Iterations", value=12),
-        gr.components.Number(label="Tolerance", value=0.01),
-    ],
-    outputs=[
-        gr.Textbox(label="Logs et Résumé", lines=10),
-        gr.DataFrame(label="Résultats Normalisés et Températures"),
-        gr.File(label="Téléchargez les Résultats"),
-    ],
-    title="Simulation de Distillation",
-)
 
 iface.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
