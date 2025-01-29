@@ -5,6 +5,8 @@ from scipy.interpolate import interp1d
 import gradio as gr
 import seaborn as sns
 import os
+import groq
+
 
 
 # ------------------------- Helper Functions -------------------------
@@ -210,6 +212,7 @@ def style_results(df):
 
 """
 
+
 def gradio_interface(max_iterations, tolerance, plot_choice):
     results = run_simulation(int(max_iterations), float(tolerance))
     logs = results["logs"]
@@ -318,7 +321,30 @@ def gradio_interface(max_iterations, tolerance, plot_choice):
         plt.close()
 
     return formatted_logs, df_results, filepath, plot
+# Configurer l'API Groq
+client = groq.Client(api_key="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")  # Mets ta vraie clé ici
 
+def chatgpt_response(prompt, history=[]):
+    """Gère les requêtes à Groq avec gestion des erreurs"""
+    if history is None:
+        history = []
+
+    messages = [{"role": "system", "content": "Tu es un assistant expert en simulation de distillation."}]
+
+    for user_msg, bot_msg in history:
+        messages.append({"role": "user", "content": user_msg})
+        messages.append({"role": "assistant", "content": bot_msg})
+
+    messages.append({"role": "user", "content": prompt})
+
+    try:
+        response = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=messages
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Erreur API Groq : {e}"
 # Gradio Interface Setup
 iface = gr.Blocks(css=custom_css)
 
@@ -376,5 +402,19 @@ with iface:
         inputs=[max_iterations, tolerance, plot_choice],
         outputs=[logs_summary, results_table, download_file, plot_output],
     )
+# Chatbot Groq
+    with gr.Row():
+        chatbot = gr.Chatbot(label="Assistant IA", height=400)
 
+    with gr.Row():
+        chat_input = gr.Textbox(label="Posez une question à ChatGPT", placeholder="Tapez votre question ici...")
+        send_button = gr.Button("Envoyer")
+
+    def chat_interaction(message, history):
+        response = chatgpt_response(message, history)
+        history.append((message, response))
+        return history, ""
+
+    send_button.click(chat_interaction, inputs=[chat_input, chatbot], outputs=[chatbot, chat_input])
+# Lancer l'interface
 iface.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
